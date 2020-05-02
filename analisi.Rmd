@@ -1,0 +1,327 @@
+---
+title: "Covid 19 Mortalità"
+author: "Boschi Giulia 804623"
+date: "1/5/2020"
+output:
+  html_document: default
+  pdf_document: default
+  word_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = F, warning = F)
+```
+
+```{r}
+#il mondo di wikam
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+suppressPackageStartupMessages(library(ggplot2))
+suppressPackageStartupMessages(library(forecast))
+suppressPackageStartupMessages(library(astsa))
+suppressPackageStartupMessages(library(lmtest))
+suppressPackageStartupMessages(library(fUnitRoots))
+suppressPackageStartupMessages(library(FitARMA))
+suppressPackageStartupMessages(library(strucchange))
+suppressPackageStartupMessages(library(reshape))
+suppressPackageStartupMessages(library(Rmisc))
+suppressPackageStartupMessages(library(fBasics))
+library(tseries)
+library(lubridate)
+
+setwd("C:\\Users\\giuli\\Google Drive\\DS\\Data science lab\\dati-giornalieri-comune")
+
+dt <- read.csv("comune_giorno.csv")
+```
+
+
+```{r}
+td <- dt %>% gather(key = "SESSO_ANNO", value = "DECESSI", #diamo dei nomi
+                    MASCHI_15:TOTALE_20) 
+```
+
+```{r}
+splt_sesso_anno <- strsplit(td$SESSO_ANNO, "_", fixed = T)
+```
+
+```{r}
+td <- td %>% mutate (SESSO = sapply(splt_sesso_anno, function(x) x[1]),
+                     ANNO = sapply(splt_sesso_anno, function(x) x[2])) %>%
+  select(-SESSO_ANNO)
+```
+
+```{r}
+td %>% mutate(DATA = as.Date(paste0("0", GE, "20", ANNO), format = "%m%d%Y")) -> td
+```
+
+```{r}
+#per selezionare delle righe, seleziona quelle che rispettano tutte le condizioni inserite
+td %>% filter(DATA_INIZIO_DIFF == "1 aprile",
+              NOME_REGIONE == "Lombardia",
+              DECESSI < 9999) -> wdt
+```
+
+```{r}
+wdt %>% group_by(DATA, ANNO, NOME_PROVINCIA) %>% 
+  summarise(DECESSI = sum(DECESSI)) %>%
+  arrange(ANNO, DATA)-> wdt
+```
+
+SERIE STORICA MILANO fino al 2019
+```{r}
+wdt %>% filter(NOME_PROVINCIA == "Milano",
+              DECESSI < 9999,
+              DATA < "2020-01-01") %>% 
+  group_by(DATA) %>% 
+  summarise(DECESSI = sum(DECESSI)) %>%
+  arrange(DATA)-> milano
+
+#rimozione del 29 febbraio negli anni non bisestili che restituiva valore na in data e ovviamente nessun decesso
+milano <- milano[complete.cases(milano), ]
+```
+
+```{r}
+plot(milano$DATA, milano$DECESSI, type = "l")
+```
+Andamento non stazionario in varianza (valutare una trasformazione logaritmica). Gli ultimi tre anni hanno varianza maggiore rispetto ai primi 2, si osserva che il 2016 è praticamente stazionario se non fosse per la fine del periodo che cala leggermente. 2017 hanno von carianza maggiore (valutiamo se inserire intervento). Escludendo il 2017, il trend non mi sembra particolarmente crescente.
+
+```{r}
+tsm <- ts(milano$DECESSI)
+
+acf(tsm)
+pacf(tsm)
+```
+Acf si annulla lentamente (sintomi di non stazionarietà), pacf si annulla al terzo lag ma esce per due lag successivi (forse c'è una regolarità). In acf si osserva l'andamento stagionale (onde regolari sui lag, ma di difficile interpretazione data la particolare serie). Da questi correllogrammi direi che c'è della stagionalità che andrebbe corretta, ma non me la sento di fare differenze dato che si tratta di 5 serie separate temporalmente una dall'altra. L'alternativa che si può provare è inserire componenti stagionali SAR e SMA nel modello SARIMA.
+
+```{r}
+adf.test(tsm)
+```
+Test di Dickey fuller per capire se la serie presenta una radice unitaria  ($|\phi| < 0 $) che comporta la non stazionarietà del modello. In questo caso siamo sul limite. L'obiettivo sarebbe avere un p-val < 0.01, il nostro è 0.02.
+
+#Modello semplicissimo
+```{r}
+mod1 <- Arima(tsm, order = c(1, 0, 1))
+
+summary(mod1)
+coeftest(mod1)
+```
+Parametri significativi, AIC = 5303, MAPE = 11 (Indicatore di bontà del modello, di solito si ritiene buono un modello con MAPE inferiore a 12 o 15)
+
+Analisi dei residui
+```{r}
+checkresiduals(mod1)
+
+#test incorrelazione
+LjungBoxTest(residuals(mod1), k = 1, lag.max = 20)
+
+#test normalità
+jarque.bera.test(residuals(mod1))
+```
+Test di Ljung box testa $H_0: \rho_1=\rho_2 = ... = \rho_n = 0$ per vedere se i residui sono incorrelati tra loro e quindi realizzazione di un processo white noise. Il test rifiuta l'ipotesi nulla quindi sono correlati però, guardando i grafici, sembrerebbero white noise (il plot salta su e giù intorno allo 0 e acf è nullo ad eccezione di qualche lag). Quello che fa saltare il test è proprio l'acf che è significativo per qualche lag con una certa "stagionalità". Ci consiglia di correggerla, ma non sa che non è una vera stagionalità.
+
+
+Dal test di Jarque-Bera per la normalità ($H_0$: i residui sono realizzazione di una v.c. normale) si deduce che i residui non sono normali (p-val < 0.01). Però, osservando il grafico dei residui e il loro adattamento alla curva della normale, si nota un ottimo adattamento a quest'ultima. Il problema che rileva il test è probabilmente causato dalle code. Non mi preoccuperei della non normalità visto l'adattamento.
+
+#Modello con trasformata logaritmica
+```{r}
+BoxCox.lambda(tsm)
+```
+Il lambda ottimo è abbastanza lontano dallo o (trasformazione logaritmica), è praticamente a metà strada da 0.5
+
+```{r}
+ltsm <- log(tsm)
+
+ts.plot(ltsm)
+
+acf(ltsm)
+pacf(ltsm)
+
+adf.test(ltsm)
+```
+Si vedono ancora i due salti sul 2017 e 2018, ma il problema è sempre che non è corretto vederla così
+I correlogrammi hanno lo stesso identico andamento di quelli senza trasformata logaritmica e il p-value del test di DF aumenta (non drasticamente, ma se non andava bene prima non va bene neanche ora).
+
+```{r}
+mod2 <- Arima(ltsm, order = c(1, 0, 1))
+
+summary(mod2)
+coeftest(mod2)
+```
+Nonostante i presupposti per la trasformazione logaritmica non fossero ottimi il valore di AIC è crollato (-674) e questo è ottimo e anche il valore di MAPE si è ridotto sensibilmente (2.2). I coefficienti significativi sono gli stessi del modello 1.
+
+Analisi dei residui
+```{r}
+checkresiduals(mod2)
+
+#test incorrelazione
+LjungBoxTest(residuals(mod2), k = 1, lag.max = 20)
+
+#test normalità
+jarque.bera.test(residuals(mod2))
+```
+Il p-value di LB è cresciuto (Q diminuisce di 5 punti), perà i residui restano correlati, ma ora sono normali (JB test ha p-val = 0.65)
+
+#Modello con trasformata logaritmica ed inserimento di stagionalità SARIMA
+Questa è proprio farla sporca. Per fare il modello sarima, devi mettere nella lista la stagionalità. Io ho messo 4 per indicare che si tratta di trimesti, lui però così li interpreta come trimestri dello stesso anno
+```{r}
+mod3 <- Arima(ltsm, order = c(1, 0, 1), seasonal = list(order = c(1,0,0), period = 4))
+
+summary(mod3)
+coeftest(mod3)
+```
+Il coefficiente autoregressivo per la componente stagionale è poco significativo. AIC scende ancora, ma di poco, rispetto al modello prima e MAPE non ha un netto miglioramento.
+
+```{r}
+checkresiduals(mod3)
+
+#test incorrelazione
+LjungBoxTest(residuals(mod3), k = 1, lag.max = 20)
+
+#test normalità
+jarque.bera.test(residuals(mod3))
+```
+Ci avviciniamo all'incorrelazione e sono normali. Non inserirei la stagionalità per dei così piccoli miglioramenti dato che siamo in questa situazione strana e comunque non corregge l'incorrelazione (unico vero problema che abbiamo).
+
+#Modello log con differenza prima
+Per tentare di correggere la correlazione inserisco una differenza prima
+```{r}
+mod4 <- Arima(ltsm, order = c(0, 1, 1))
+
+summary(mod4)
+coeftest(mod4)
+```
+Inserendo la differenza prima l'unico coefficiente che resta significativo è quello a media mobile. I valori di MAPE e AIC non mostrano chissà che miglioramenti
+
+```{r}
+checkresiduals(mod4)
+
+#test incorrelazione
+LjungBoxTest(residuals(mod4), k = 1, lag.max = 20)
+
+#test normalità
+jarque.bera.test(residuals(mod4))
+```
+Residui sempre normali, ma correlati
+
+#Modello con differenza e stagionalità
+```{r}
+mod5 <- Arima(ltsm, order = c(0, 1, 1), seasonal = list(order = c(1,0,1), period = 4))
+
+summary(mod5)
+coeftest(mod5)
+```
+MAPE e AIC sono sempre lì
+
+```{r}
+checkresiduals(mod5)
+
+#test incorrelazione
+LjungBoxTest(residuals(mod5), k = 1, lag.max = 20)
+
+#test normalità
+jarque.bera.test(residuals(mod5))
+```
+Miglioriamo sempre di più il valore di Q, ci avviciniamo alla incorrelazione, anzi potremmo anche accettarla per una soglia un po' scarsa, ma sinceramente non so se sia giusto questo modello sia per la differenza che per la stagionalità fasulla.
+
+#Modello con intervento sul 2017
+Aggiungo una colonna al dataset con valore 1 quando siamo nel 2017 e 0 negli altri anni
+```{r}
+milano$int <- ifelse(year(milano$DATA) == "2017", 1, 0)
+```
+
+```{r}
+mod6 <- Arima(tsm, order = c(1, 0, 1), xreg = milano$int)
+
+summary(mod6)
+coeftest(mod6)
+```
+L'intervento non è significativo
+
+#Modello solo per il 2019
+```{r}
+milano19 <- milano[year(milano$DATA) == "2019", ]
+
+tsm19 <- ts(milano19$DECESSI)
+
+ts.plot(tsm19)
+ts.plot(log(tsm19))
+ts.plot(diff(tsm19))
+ts.plot(diff(log(tsm19)))
+```
+La serie si nota non essere stazionaria in media, la trasformazione logaritmica (che serve a sistemare la non stazionarietà in varianza, ma si fa per prima dato che può sistemare anche quella in media) non sembra risolvere niente. Applicando la differenza prima la questione si sistema un po', si nota un picco a inizio febbraio e inizio aprile. La combo trasformazione + differenza non risolve granchè.
+
+```{r}
+acf(tsm19)
+pacf(tsm19)
+
+acf(diff(tsm19))
+pacf(diff(tsm19))
+```
+Andamento strano della pacf che cresce prima di annullarsi. Acf ha andamento stagionale.
+Con la differenza si vede acf che si annulla al quarto lag con andamento alternato e pacf negativa che si annulla al secondo lag. L'alternarsi delle barrette consiglia il modello AR
+
+```{r}
+mod7 <- Arima(tsm19, order = c(2, 1, 0))
+
+summary(mod7)
+coeftest(mod7)
+```
+
+```{r}
+checkresiduals(mod7)
+
+#test incorrelazione
+LjungBoxTest(residuals(mod7), k = 1, lag.max = 20)
+
+#test normalità
+jarque.bera.test(residuals(mod7))
+```
+Correlati e normali un po' così così.
+
+#Modello solo per il 2019 con trasformata logaritmica
+```{r}
+mod8 <- Arima(log(tsm19), order = c(2, 1, 0))
+
+summary(mod8)
+coeftest(mod8)
+```
+Come prima AIC e MAPE crollano
+
+```{r}
+checkresiduals(mod8)
+
+#test incorrelazione
+LjungBoxTest(residuals(mod8), k = 1, lag.max = 20)
+
+#test normalità
+jarque.bera.test(residuals(mod8))
+```
+Meglio normali, Q si abbassa ma comunque non sono incorrelati. Comunque i grafici non sono terribili
+
+#Riassumendo
+- Modello 1: ARMA(1,1), AIC = 5303, MAPE = 11, Q = 27.9 con p-val = 0.0002, p-value JB < 0.001
+- Modello 2: ARMA(1,1) con trasformazione logaritmica, AIC = -674, MAPE = 2.207, Q = 22.48 con p-val = 0.002, p-value JB = 0.65
+- Modello 3: SARMA(1,1)(1,0) con trasformazione logaritmica, AIC = -676.62, MAPE = 2.199, Q = 16.45 con p-value = 0.012, p-value JB = 0.65
+- Modello 4: ARIMA(0,1,1) con trasformazione logaritmica, AIC = -665.38, MAPE = 2.22, Q = 21.87 con p-value = 0.0093, JB p-value = 0.62
+- Modello 5: SARIMA(0,1,1)(1,0,1) con trasformazione logaritmica, AIC = -668.85, MAPE = 2.20, Q = 15.75 con p-value = 0.027, JB p-value = 0.5566
+- Modello 6: Prova di modello con intervento sul 2017, l'intervento non è signifiativo
+- Modello 7: Modello solo sul 2019 ARIMA(2,1,0), AIC=1060.16, MAPE = 11.02, Q = 27.02 con p-value = 0.0007, JB p-value = 0.092
+- Modello 8: Modello solo sul 2019 ARIMA(2,1,0) con trasformazione logaritmica, AIC = -126.46, MAPE = 2.186, Q = 25.341 con p-value = 0.001, JB p-value = 0.7851
+
+Tutto considerato penso che il modello 2 sia il modello migliore, ma la cosa della correlazione è da studiarsela meglio.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
