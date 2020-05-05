@@ -1,0 +1,210 @@
+---
+title: "Lombardia"
+author: "Boschi Giulia 804623"
+date: "3/5/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = F, warning = F)
+```
+```{r}
+library(dplyr)
+library(tidyr)
+
+setwd("C:\\Users\\giuli\\Google Drive\\DS\\Data science lab\\dati-giornalieri-comune")
+```
+
+```{r, include = F}
+Lombardia <- read.csv("Lombardia.csv", colClasses = c('Date', 'integer', 'character', 'integer')) %>%
+  dplyr::filter(DATA < "2020-01-01") %>%
+  dplyr::group_by(DATA) %>% 
+  dplyr::summarise(DECESSI = sum(DECESSI))
+```
+
+```{r}
+suppressPackageStartupMessages(library(ggplot2))
+suppressPackageStartupMessages(library(forecast))
+suppressPackageStartupMessages(library(astsa))
+suppressPackageStartupMessages(library(lmtest))
+suppressPackageStartupMessages(library(fUnitRoots))
+suppressPackageStartupMessages(library(FitARMA))
+suppressPackageStartupMessages(library(strucchange))
+suppressPackageStartupMessages(library(reshape))
+suppressPackageStartupMessages(library(Rmisc))
+suppressPackageStartupMessages(library(fBasics))
+library(tseries)
+library(lubridate)
+```
+
+```{r}
+dt <- read.csv("comune_giorno.csv")
+```
+
+#Pulizia del dataset
+```{r}
+td <- dt %>% gather(key = "SESSO_ANNO", value = "DECESSI", #diamo dei nomi
+                    MASCHI_15:TOTALE_20) 
+```
+
+```{r}
+td %>% tidyr::separate(SESSO_ANNO, c("SESSO", "ANNO"), "_") -> td
+```
+
+
+```{r}
+td %>% mutate(DATA = as.Date(paste0("0", GE, "20", ANNO), format = "%m%d%Y")) -> td
+```
+
+#Verifica su data_inizio_diff
+
+```{r}
+library(plyr)
+td %>% dplyr::filter(DECESSI < 9999) %>%
+  dplyr::group_by(NOME_REGIONE, DATA_INIZIO_DIFF) %>% 
+  dplyr::summarise(N_COMUNI = length(unique(NOME_COMUNE)))
+```
+
+```{r}
+td %>% dplyr::filter(DECESSI < 9999) %>%
+  dplyr::group_by(NOME_REGIONE) %>% 
+  dplyr::summarise(N_COMUNI = length(unique(NOME_COMUNE)))
+```
+
+#Estrazione dati per la Lombardia
+```{r}
+td %>% dplyr::filter(DATA_INIZIO_DIFF != "Dati 2020 n.d.",
+              NOME_REGIONE == "Lombardia",
+              DECESSI < 9999) -> wdt
+```
+
+```{r}
+wdt %>% dplyr::filter(SESSO == "TOTALE") %>%
+  dplyr::group_by(DATA, ANNO, NOME_PROVINCIA) %>% 
+  dplyr::summarise(DECESSI = sum(DECESSI)) %>%
+  dplyr::arrange(ANNO, DATA)-> Lombardia
+```
+
+#Analisi di serie storiche
+```{r}
+tsl <- ts(Lombardia$DECESSI)
+
+plot(Lombardia$DATA, Lombardia$DECESSI, type = "l", xlab = "Time", ylab = "Deaths")
+plot(tsl, ylab = "Deaths")
+
+acf(tsl)
+pacf(tsl)
+
+adf.test(tsl)
+```
+
+#Base
+```{r}
+mod1 <- Arima(tsl, order = c(2, 0, 0))
+
+summary(mod1)
+coeftest(mod1)
+```
+
+Analisi dei residui
+```{r}
+checkresiduals(mod1)
+
+#test incorrelazione
+LjungBoxTest(residuals(mod1), k = 1, lag.max = 20)
+
+#test normalità
+jarque.bera.test(residuals(mod1))
+```
+
+#Modello con 3 componenti autoregressive
+```{r}
+mod2 <- Arima(tsl, order = c(3, 0, 0))
+
+summary(mod2)
+coeftest(mod2)
+```
+
+Analisi dei residui
+```{r}
+checkresiduals(mod2)
+
+#test incorrelazione
+LjungBoxTest(residuals(mod2), k = 1, lag.max = 20)
+
+#test normalità
+jarque.bera.test(residuals(mod2))
+```
+
+#Modello ARMA(3,2)
+```{r}
+mod3 <- Arima(tsl, order = c(3, 0, 2))
+
+summary(mod3)
+coeftest(mod3)
+```
+
+```{r}
+checkresiduals(mod3)
+
+#test incorrelazione
+LjungBoxTest(residuals(mod3), k = 1, lag.max = 20)
+
+#test normalità
+jarque.bera.test(residuals(mod3))
+```
+
+#Riassumendo
+Modello 1: AR(2), AIC = 5252 , MAPE = 6.98, Q* = 27.4 con p-value = 0.00028, JB p-value p-value < 0.01
+Modello 2: AR(3), AIC = 5229.33, MAPE = 6.78, Q* = 11.5 con p-value = 0.074, JB p-value < 0.01
+Modello 3: ARMA(3,2), AIC = 5224.2, MAPE = 6.72, Q* = 5.3922 con p-value = 0.2494, JB p-value < 0.01
+
+#Forecast su modello 3
+```{r}
+h_fut <- 91
+previsioni = forecast(mod3, h = h_fut)
+plot(previsioni)
+
+newdays <- seq(as.Date("2020-01-01"), as.Date("2020-03-31"), by="days")
+prev_ci <- data.frame(DATA = newdays, MEDIA = exp(previsioni$mean), LB95 = exp(previsioni$lower[,2]), UB95 = exp(previsioni$upper[,2])); prev_ci
+```
+
+
+-----------------------------------------------------
+
+#Dati decessi in Lombardia 2020
+```{r}
+Lombardia20 <- read.csv("Lombardia.csv", colClasses = c('Date', 'integer', 'character', 'integer')) %>%
+  dplyr::filter(DATA >= "2020-01-01") %>%
+  dplyr::group_by(DATA) %>% 
+  dplyr::summarise(DECESSI = sum(DECESSI))
+```
+
+#Import decessi per regione da covid
+```{r}
+lomb <- read.csv("regione_giorno.csv") %>%
+  dplyr::filter(denominazione_regione == "Lombardia") %>%
+  select(c(data, deceduti )) %>%
+  arrange(data)
+```
+
+```{r}
+colnames(lomb)[1] <- "DATA"
+lomb$DATA <- date(as_datetime(lomb$DATA, tz = "UTC")); lomb
+```
+
+#Merge dei tre dataset
+```{r}
+decessi_lomb <- merge(merge(Lombardia20, prev_ci, by = 'DATA'), lomb, by = 'DATA'); decessi_lomb
+```
+
+Differenza tra decessi e media stimata
+```{r}
+decessi_lomb$diff <- decessi_lomb$DECESSI - decessi_lomb$MEDIA; decessi_lomb
+```
+
+Quanti sono stati i morti accertati per corona virus vs quanti morti stimiamo per coronavirus
+```{r}
+decessi_lomb$surplus_covid <- decessi_lomb$diff - decessi_lomb$deceduti; decessi_lomb
+```
+
