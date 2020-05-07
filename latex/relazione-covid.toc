@@ -1,0 +1,5 @@
+\contentsline {section}{\numberline {1}Introduction}{2}% 
+\contentsline {section}{\numberline {2}Dataset description}{2}% 
+\contentsline {section}{\numberline {3}Modelling}{5}% 
+\contentsline {section}{\numberline {4}Covid-19 deaths estimate}{8}% 
+\contentsline {section}{\numberline {5}Conclusions \& Limitations}{12}% 

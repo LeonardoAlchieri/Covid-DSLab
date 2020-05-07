@@ -1,0 +1,31 @@
+\begin{thebibliography}{1}
+
+\bibitem{missing_values}
+A.~C. Acock.
+\newblock Working with missing values.
+\newblock {\em Journal of Marriage and Family}, 67(4):1012--1028, 2005.
+
+\bibitem{box1975intervention}
+G.~E. Box and G.~C. Tiao.
+\newblock Intervention analysis with applications to economic and environmental
+  problems.
+\newblock {\em Journal of the American Statistical association},
+  70(349):70--79, 1975.
+
+\bibitem{remuzzi2020covid}
+A.~Remuzzi and G.~Remuzzi.
+\newblock Covid-19 and italy: what next?
+\newblock {\em The Lancet}, 2020.
+
+\bibitem{uncertainty}
+D.~Rochman, W.~Zwermann, S.~C. van~der Marck, A.~J. Koning, H.~Sjöstrand,
+  P.~Helgesson, and B.~Krzykacz-Hausmann.
+\newblock Efficient use of monte carlo: Uncertainty propagation.
+\newblock {\em Nuclear Science and Engineering}, 177(3):337--349, 2014.
+
+\bibitem{analisi_statistica}
+L.~Vajani.
+\newblock {\em Analisi statistica delle serie temporali, Volume primo}.
+\newblock 1982.
+
+\end{thebibliography}
